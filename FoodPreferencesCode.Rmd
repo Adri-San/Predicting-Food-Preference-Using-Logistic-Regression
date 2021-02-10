@@ -1,0 +1,389 @@
+---
+title: "Food Preferences"
+output: html_notebook
+author: "Adri-San"
+---
+
+## Introdución al dataset
+
+Durante este documento, trabajaremos con el conjunto de datos de 288 entradas, [Food Preferences](https://www.kaggle.com/vijayashreer/food-preferences). El conjunto de datos se basa en una encuesta realizada en el 2019 a un grupo de sujetos de distinta nacionalidad y edad con preferencias alimentarias de diversa índole.
+
+El objetivo de este trabajo, será el de intentar predecir la preferencia alimentaria de los participantes en el mencionado estudio.
+
+Primeramente, vamos a cargar los datos.
+
+```{r}
+foodPreferences <- read.csv("Food_Preference.csv")
+```
+
+A continuación, vamos a ver un resumen de los datos con la función summary. Este dataset dispone de ocho columnas: Timestamp, que representa la fecha en la que se realizó la encuesta al sujeto participante, Participant_ID, el identificador que representa de forma única a cada sujeto, Gender, que representa el género del sujeto (Masculino o Femenino), Nationality, que indica la nacionalidad del participante (si el encuestado es indio, malasio, japonés, etc.) y Age, la edad del encuestado en formato numérico.
+
+También dispone de la columna Food, la cual será la variable a predecir, pues representa el tipo de comida que prefiere el participante (comida tradicional o comida occidental). Por otro lado, la columna Juice indicará la preferencia del sujeto en cuanto a las bebidas/zumos (bebidas carbonatadas o zumo fresco) y, finalmente, la columna Dessert indicará la preferencia en cuanto a postre (sí, quizás o no).
+
+```{r}
+summary(foodPreferences)
+```
+## Limpieza de los datos
+
+Es importante darse cuenta de que las dos primeras variables (Timestamp y Participant_ID) son totalmente inservibles, es decir, no nos van a ayudar a predecir la variable Food y mucho menos a crear un modelo que sea capaz de generalizar (ser capaz de predecir y trabajar con datos nuevos). Esto es sencillo de ver si pensamos que cada participante va a tener un identificador único (podemos observar en el trozo de código de abajo que existen tantos identificadores únicos (evidentemente) como sujetos participan en el estudio: 288).
+
+```{r}
+str(foodPreferences)
+```
+
+```{r}
+length(unique(foodPreferences$Participant_ID))
+```
+Los identificadores, de no eliminarlos, generan un sobreajuste en los modelos de aprendizaje. Si por ejemplo entrenáramos al modelo con este conjunto de datos al completo (utilizando el 100% de los datos para training) guiándonos por la variable Participant_ID podríamos observar que en cuanto lleguen datos nuevos, el modelo no va a saber tratarlos, o lo que es lo mismo generalizar, pues cada uno de esos datos nuevos va a tener un identificador único.
+
+Lo mismo ocurre con la variable Timestamp, que representa el instante en el que se realizó la encuesta al sujeto. Es fácil de imaginar y comprobar, basándonos en el razonamiento anterior, cómo esta variable tampoco nos ayuda a generalizar.
+
+Por todo lo expuesto hasta ahora, eliminaremos las variables Timestamp y Participant_ID de nuestro conjunto de datos.
+
+```{r}
+foodPreferences$Timestamp <- NULL
+foodPreferences$Participant_ID <- NULL
+summary(foodPreferences)
+```
+Si nos fijamos atentamente a los valores que toma la variable Nationality, podemos observar que existen algunas inconsistencias y errores tipográficos, que se han de subsanar, limpiando así nuestro dataset.
+
+Si ejecutamos el código inferior, vemos como "Pakistani ", "Pakistan" y "Pakistani" se tratan como nacionalidades diferentes cuando en verdad se refieren a la misma. Lo mismo ocurre con "Malaysian", "MALAYSIAN", "Malaysian ", "MY", "Malaysia " y "Malaysia", con "Maldivian " y Maldivian", y con "Indonesia", "Indonesian ", "Indonesain" y "Indonesian".  
+
+```{r}
+unique(foodPreferences$Nationality)
+```
+Iniciaremos este proceso conviertendo todos los valores a minúscula y eliminando los espacios en blanco por los laterales.
+
+```{r}
+foodPreferences$Nationality <- tolower(foodPreferences$Nationality)
+foodPreferences$Nationality <- trim(foodPreferences$Nationality)
+```
+
+El siguiente paso será más "manual", pues tendremos que subsanar los errores tipográficos.
+
+```{r}
+foodPreferences[foodPreferences$Nationality  == "pakistan", 2] <- "pakistani"
+foodPreferences[foodPreferences$Nationality  == "malaysia", 2] <- "malaysian"
+foodPreferences[foodPreferences$Nationality  == "MY", 2] <- "malaysian"
+foodPreferences[foodPreferences$Nationality  == "indonesia", 2] <- "indonesian"
+foodPreferences[foodPreferences$Nationality  == "indonesain", 2] <- "indonesian"
+```
+
+También tenemos que hacer limpieza en los datos relativos al género, pues hay cuatro entradas sin valor. Esto es comúnmente conocido como 'valores perdidos' o 'missing values'. 
+
+```{r}
+foodPreferences[foodPreferences$Gender == "",]
+```
+
+Ante esta situación, nos decantaremos por la estrategia que elige el valor más común de Gender, cuando la variable a predecir (Food) toma el valor "Traditional Food", pues las entradas con valores perdidos prefieren "comida tradicional". El valor más común bajo estas condiciones es Female, por tanto, tomarán el valor "Female".
+
+```{r}
+foodPreferences[foodPreferences$Gender == "",1] <- "Female"
+foodPreferences[c(15,226,269,278),]
+```
+## Regresión Logística Regularizada
+
+Para seguir trabajando con nuestro conjunto de datos, vamos a detallar el algoritmo que utilizaremos para predecir la variable Food: Regularized Logistic Regression.
+
+La regresión logística (logistic regression) es una técnica de clasificación que, como cualquier otra, tratará de encontrar una forma de separar la clase postiva (comida tradicional, en nuestro caso) de la negativa (comida occidental), etiquentándolas como 0 ó 1.
+
+Esta técnica, emplea la estadística para modelar una salida binomial con una o más variables explicativas. Mide la relación entre la variable categórica dependiente y una o más variables independientes, estimando probabilidades por medio de una función logística, la distribución logística acumulada (cumulative logistic distribution).
+
+La técnica de regresión más conocida es la regresión lineal. No obstante, esta tiene ciertas limitaciones que nos encaminan a utilizar la regresión logística para este texto, pues la regresión lineal (a diferencia de la logística), no es capaz de predecir probabilidades.
+
+Si se utiliza el modelo lineal para modelar una variable de salida binomial, es posible que el modelo resultante no restrinja los valores de dicha variable al rango [0 - 1].
+
+Aquí es donde entra en juego la regresión logística. Adheriéndonos al dataset que nos atañe, tratamos de clasificar la preferencia en cuanto a comida, es decir, la variable Food. Esta variable puede tomar dos valores: comida tradicional o comida occidental. Se utilizará la regresión logística para determinar con qué probabilidad pertenece Food a una categoría particular (comida tradicional o comida occidental).
+
+Vamos a ejemplificar esto. Podríamos calcular la probabilidad de que la comida sea tradicional dada la edad del sujeto: P(Food=Traditional food | Age).
+
+Está claro que los valores de la probabilidad P(Food=Traditional food|Age) caerán en el rango [0 - 1]. En ese caso, para cualquier valor de Age, podemos hacer una predicción para la variable Food.
+
+Si X es la variable explicativa e Y la variable respuesta, el modelo de regresión lineal representa estas probabilidades tal que así: p(X) = β0 + β1 X. 
+
+La regresión logística, sin embargo, utilizará la función logística para modelar p, y por tanto, obtener en consecuencia la tan conocida curva en forma de S que da como salida valores entre 0 y 1 para toda entrada.
+      
+Los coeficientes β0 y β1, son desconocidos y deberán ser estimados basándonos en los datos de entrenamiento, consiguiendo así realizar estimaciones de forma que valores próximos a 1 sean etiquetados como 'Comida Tradicional' y próximos a 0, como 'Comida Occidental'.
+
+La regularización, por otro lado, es una técnica que se emplea para evitar el sobreajuste, en diversos paradigmas como es el de la regresión logística o de el las máquinas de vector soporte, entre otros.
+
+Usaremos el paquete caret, el cual dispone del método "regLogistic" que implementa el propio algoritmo, así como otros paquetes para la representación de los datos.
+
+```{r}
+library(caret)
+library(gdata)
+library(ggplot2)
+library(pROC)
+library(DMwR)
+```
+
+Lo primero será hacer que R trate a la variable Food como una variable categórica.
+
+```{r}
+foodPreferences$Food <- as.factor(foodPreferences$Food)
+```
+
+Vamos a hacer lo mismo con Gender, Juice, Dessert y, posteriormente, con Nationality.
+
+```{r}
+foodPreferences$Gender <- as.factor(foodPreferences$Gender)
+foodPreferences$Juice <- as.factor(foodPreferences$Juice)
+foodPreferences$Dessert <- as.factor(foodPreferences$Dessert)
+```
+
+Antes de convertir Nationality en un factor, necesitaremos corregir el desbalance existente en la distribución de los valores de dicha variable. La mayor parte de los valores (concretamente 241) de la variable Nationality son "indian". Para corregir este desbalance, haremos que toda aquella nacionalidad distinta de "indian" pertenezca a un mismo grupo: "non.indian", por ejemplo.
+
+```{r}
+foodPreferences[foodPreferences$Nationality  != "indian", 2] <- "non.indian"
+foodPreferences$Nationality <- as.factor(foodPreferences$Nationality)
+```
+
+Lo que hace as.factor "por debajo" es "trasnformar" las variables categóricas en formato numérico, de manera que sean aptas para ser utilizadas en el análisis de regresión. Las variables como Food que toman dos valores se codificarán de forma binaria, con dos niveles: 0 y 1. En el caso de variables que tomen más de un valor (n valores) como Dessert, se crearán n-1 variables "dummy". Cada una de estas últimas tendrá dos niveles y representará cada uno de los valores que toma la variable original.
+
+```{r}
+contrasts(foodPreferences$Dessert)
+```
+Llegados a este punto, analizaremos si existe alguna variable con varianza cero en nuestro dataset. Estas varibles lo único que hacen es crear modelos inestables o incluso hacer que la creación del modelo no sea satisfactoria ('crasheando' del modelo). En el caso de que hubiera alguna variable predictora con tales características la mejor solución sería recolectar más datos. Como podemos observar, no existe tal problema en nuestro dataset.
+
+```{r}
+nearZeroVar(foodPreferences, saveMetrics = TRUE)
+```
+A continuación, vamos a cambiar los nombres de los niveles de los factores Food y Juice de modo que sigan un formato válido para trabajar con R, es decir, elimnaremos los espacios en blanco en las cadenas "Traditional Food", "Western Food", "Fresh Juice" y "Carbonated drinks".
+
+```{r}
+levels(foodPreferences$Food) <- c("Traditional.food", "Western.Food")
+levels(foodPreferences$Juice) <- c("Fresh.Juice", "Carbonated.drinks")
+```
+
+Vamos a volver a observar nuestro conjunto de datos tras haber realizado todo este proceso.
+
+```{r}
+summary(foodPreferences)
+```
+
+## Visualización de los datos
+
+En las siguientes líneas, nos dedicaremos a representar gráficamente los datos y analizaremos las posibles relaciones entre ellos. Nótese que estamos supeditados a trabajar con un dataset relativamente pequeño y desbalanceado en cuanto a la distribución de algunas variables como para poder asegurar de forma diáfana y certera relaciones.
+
+Representemos la relación, por ejemplo, entre la variable numérica Age y el tipo de comida que prefieren los encuestados (Food). Vamos a utilizar el digrama de tipo jitter acompañado del digrama de caja para hacer un poco más visible la distribución de los datos.
+
+```{r}
+ggplot(foodPreferences, aes(y = Food, x = Age, color=Food)) +
+  geom_boxplot(size=1,
+               outlier.shape = 1,
+               outlier.color = "black",
+               outlier.size  = 3) +
+  
+  geom_jitter(alpha = 0.5,
+              size = 1) +
+  labs(title = "Tipo de comida en función de la edad", 
+       subtitle = "Food vs. Age",
+       x = "",
+       y = "")
+```
+Atendiendo a la gráfica de arriba, parece que existe gran dispersión con respecto a los valores que están asociados a la comida traidicional frente a los de la comida occidental. Esto podría deberse al propio dataset con el que estamos trabajando, pues existen bastantes más entradas (mayor número de puntos rojos en el gráfico) que prefieren el tipo de comida tradicional que las que prefieren el occidental (como puede verse en el diagrama inferior). 
+
+También podemos apreciar, si nos fijamos de nuevo en el diagrama de caja, que no existe una clara distinción entre los usuarios que prefieren el tipo de comida tradicional frente a la occidental teniendo en cuenta su edad.
+
+```{r}
+ggplot(foodPreferences, aes(x = Food, fill = Food)) + geom_bar(position = "stack") +
+  labs(title = "Tipo de comida (Traditional vs. Western)", 
+       x = "",
+       y = "")
+```
+Por otro lado, si prestamos atención al gráfico de abajo, que representa las relaciones entre Dessert que toma los valores: Yes, No, Maybe, frente a Food y Juice, podríamos destacar, por ejemplo, que de todas las personas que prefieren bebidas carbonatadas y se decantan por la comida occidental, un 70% tomará postres (Dessert=Yes).
+
+```{r}
+ ggplot(foodPreferences %>% count(Food, Juice, Dessert), aes(Juice, n, fill = Dessert)) + 
+        geom_bar(position = "fill" , stat = "identity", color = "white") +
+        facet_wrap(facets = vars(Food)) +
+        scale_y_continuous(labels = scales::percent) +
+        ggtitle("Tipo de postre en función de la preferencia de comida y zumos") 
+```
+Construiremos tres diagramas de barras para constatar si existen diferencias entre las preferencias recogidas en el dataset (preferencias en cuanto a comida, bebida y postre) y el género de la persona encuestada.
+
+```{r}
+ggplot(foodPreferences %>% count(Gender, Food), aes(Gender, n, fill = Food)) +
+        geom_bar(position = "fill" , stat = "identity", color = "white") +
+        labs(x = NULL, y = NULL) + scale_y_continuous(labels = scales::percent) +
+        ggtitle("Tipo de comida en función del género")
+```
+```{r}
+ggplot(foodPreferences %>% count(Gender, Juice), aes(Gender, n, fill = Juice)) +
+        geom_bar(position = "fill" , stat = "identity", color = "white") +
+        labs(x = NULL, y = NULL) + scale_y_continuous(labels = scales::percent) +
+        ggtitle("Tipo de bebida en función del género")
+```
+```{r}
+ggplot(foodPreferences %>% count(Gender, Dessert), aes(Gender, n, fill = Dessert)) +
+        geom_bar(position = "fill" , stat = "identity", color = "white") +
+        labs(x = NULL, y = NULL) + scale_y_continuous(labels = scales::percent) +
+        ggtitle("Preferencia de postre en función del género")
+```
+Según los diagramas mostrados, la distribución parece guardar semejanzas en ambos casos, tanto para el género másculino como femenino.
+
+## Construción del modelo: Training y testing
+
+Para comenzar a construir el modelo, vamos a separar el dataset en los conjuntos training y test. Al ser un conjunto de datos bastante pequeño, utilizaremos el 80% de los datos para entrenar el modelo. Por esta misma razón, se utilizará la estrategia Bootstrap con 25 repeticiones.
+
+```{r}
+set.seed(345)
+inTrain <- createDataPartition(
+  y = foodPreferences$Food, p = .8, list = FALSE
+)
+
+training <- foodPreferences[ inTrain,]
+testing  <- foodPreferences[-inTrain,]
+
+```
+
+También es importante señalar cómo vamos a evaluar el modelo. En la regresión logística regularizada, se suelen emplear diferentes métricas: el Criterio de información de Akaike (AIC), más bien útil para comparar varios modelos, la Matriz de Confusión (Confusion Matrix) y el área bajo la curva ROC (AUC).
+
+La ya tan conocida métrica Accuracy no se utilizará para guiar el modelo, y no será la principal medida la que atenderemos pues podría resultar bastante poco representativa o "pobre" en el caso que nos toca analizar, y es que, cuanto más desbalance exista en el conjunto de datos menos representativa será esta métrica. Dicho brevemente: esta métrica sería más adecuada para datasets balanceados.
+
+Construimos el modelo, indicando que la variable a predecir es Food utilizando el resto de variables del dataset. El modelo será "regLogistic" y la métrica que vamos a utilizar será la de el Área bajo la curva ROC ("AUC"). Para comenzar el proceso de exploración, nos apoyaremos en el parámetro tuneLength, al cual le asignaremos el valor 5. Este último combinará distintos valores de los parámetros de la regresión logística regularizada: "loss", "epsilon" y "cost".
+
+```{r}
+regLogCtrl <- trainControl(
+                            method = "boot",
+                            number = 25,
+                            classProbs = TRUE, 
+                            summaryFunction = multiClassSummary
+                          )
+
+set.seed(345)
+regLog <- train(Food ~ ., 
+                data = training, 
+                method = "regLogistic", 
+                trControl = regLogCtrl,
+                metric = "AUC", 
+                tuneLength = 5)
+```
+
+El código de abajo, nos muestra los resultados obtenidos en el entrenamiento para la mejor configuración encontrada (cost = 0.25, loss = L2_dual, epsilon = 1): AUC = 0.6933539, Accuracy = 0.8275063, Sensitivity = 0.9949013, Specificity = 0.03136393, Kappa = 0.0409894.
+
+```{r}
+regLog$results[rownames(regLog$bestTune),]
+```
+Ahora vamos a ver los resultados en testing: Accuracy = 0.8421, Sensitivity = 1.0000, Specificity = 0.1000, Kappa = 0.1549. Si comparamos estos resultados frente a los obtenidos en training, podríamos decir que, en principio, no parece haber sobreajuste, pues obtenemos mejores números ante datos nuevos que los obtenidos durante el training.
+
+```{r}
+confusionMatrix(predict(regLog,testing),testing$Food)
+```
+Vamos a dibujar la cuadrícula de búsqueda de hiperparámetros óptimos que sustenta la elección tomada por el método regLogistic:
+
+```{r}
+ggplot(regLog) + theme(legend.position = "top")
+```
+
+
+Dibujaremos también, la curva ROC para ver el área bajo la curva de forma gráfica.
+
+```{r}
+roc0 <- roc(testing$Food, 
+            predict(regLog, testing, type = "prob")[,1], 
+            levels = rev(levels(testing$Food)))
+
+plot(roc0, print.thres = c(.5), type = "S", legacy.axes = TRUE)
+```
+
+Construimos el modelo de nuevo, pero esta vez, especificando la configuración de parámetros obtenida anteriormente: cost = 0.25, loss = L2_dual, epsilon = 1.
+
+```{r}
+regLogCtrl2 <- trainControl(
+                            method = "boot",
+                            number = 25,
+                            classProbs = TRUE, 
+                            summaryFunction = multiClassSummary
+                          )
+
+set.seed(345)
+regLog2 <- train(Food ~ ., 
+                data = training, 
+                method = "regLogistic", 
+                trControl = regLogCtrl2,
+                metric = "AUC", 
+                tuneGrid = expand.grid(cost = 0.25, loss = "L2_dual", epsilon = 1))
+```
+```{r}
+regLog2$results[rownames(regLog2$bestTune),]
+```
+```{r}
+confusionMatrix(predict(regLog2,testing),testing$Food)
+```
+```{r}
+roc0 <- roc(testing$Food, 
+            predict(regLog2, testing, type = "prob")[,1], 
+            levels = rev(levels(testing$Food)))
+
+plot(roc0, print.thres = c(.5), type = "S", legacy.axes = TRUE)
+```
+
+Como podemos apreciar en la curva ROC, la especificidad es sumamente baja (0.1) al lado de la sensibilidad (1). Este problema suele aparecer en conjuntos de datos desbalanceados y pequeños. 
+
+Vamos a volver a entrar utilizando la configuración "óptima" de parámetros obtenida anteriormente y trataremos de subsanar el problema del "desbalance". Existen diversos métodos en la literatura que atacan este tema. El paquete caret, concretamente, dispone de algunos métodos implementados. Dicho lo anterior, vamos a realizar un submuestreo, particularmente el conocido como "down-sampling". Este método, muestrea de forma aleatoria la clase mayoritaria para que tenga el tamaño de la minoritaria.
+
+```{r}
+
+ctrlSpec <- trainControl(
+  method = "boot",
+  number = 25,
+  classProbs = TRUE, 
+  summaryFunction = multiClassSummary,
+  sampling="down"
+)
+
+regLogSpecGrid <- expand.grid(cost = 0.25, loss = "L2_dual", epsilon = 1)
+
+set.seed(345)
+regLogSpec <- train(Food ~ ., 
+                data = training, 
+                method = "regLogistic", 
+                trControl = ctrlSpec,
+                metric = "AUC",
+                tuneGrid = regLogSpecGrid) 
+```
+
+Mostramos los resultados obtenidos en training: AUC = 0.6821138, Accuracy = 0.6626609, Sensitivity = 0.6936412, Specificity = 0.5176873, Kappa = 0.1565521.
+
+```{r}
+regLogSpec$results[rownames(regLogSpec$bestTune),]
+```
+Y los resultados de testing: Accuracy = 0.7544, Sensitivity = 0.8085, Specificity = 0.5000, Kappa = 0.2665.
+
+```{r}
+confusionMatrix(predict(regLogSpec,testing),testing$Food)
+```
+Vamos a mostrar también la precisión, el recall y la puntuación del F1 en testing, los cuales también aumentan con respecto a training: 
+
+```{r}
+confusionMatrix(predict(regLogSpec,testing),testing$Food)$byClass["Precision"]
+confusionMatrix(predict(regLogSpec,testing),testing$Food)$byClass["Recall"]
+confusionMatrix(predict(regLogSpec,testing),testing$Food)$byClass["F1"]
+```
+
+Finalmente, dibujamos la curva ROC para este modelo:
+
+```{r}
+roc0 <- roc(testing$Food, 
+            predict(regLogSpec, testing, type = "prob")[,1], 
+            levels = rev(levels(testing$Food)))
+
+plot(roc0, print.thres = c(.5), type = "S",
+     legacy.axes = TRUE)
+```
+## Conclusiones
+
+Hemos aumentado la especificidad (Specificity) de forma cuantitativa, de 0.03136393 a 0.5176873 con respecto a los datos utilizados en el entrenamiento y de 0.1000 a 0.5000 con respecto a los de testing. También ha ocurrido lo mismo con el valor Kappa. La precisión, el recall y F1, en testing toman los valores: 0.8837209, 0.8085106 y 0.8444444, respectivamente, son medidas que pueden ser interesantes en datsets que no están suficientemente balanceados.
+
+La curva ROC se mantiene, relativamente, de un modelo a otro, y la Accuracy, como hemos expuesto antes, no es una medida representativa para este conjunto de datos.
+
+En este documento, hemos recogido las optimizaciones, el ajuste de parámetros (cost, loss y epsilon) y la construcción de los modelos que obtuvieron los "mejores" resultados o que se presentaban como los más interesantes, a modo de un resumen representativo, tras un largo proceso de ajuste y optimización previo a llegar a dichas configuraciones y modelos.
+
+Es posible que se pudieran conseguir mejores resultados haciendo un trabajo de exploración más ambicioso. No obstante, tras haber explorado como se ha mencionado antes y al tratarse de un dataset con tan solo 288 entradas y datos relativamente desbalanceados, así como nuevos (la actividad existente en este dataset en Kaggle es prácticamente nula con respecto a otros datasets mas antiguos con miles de aportaciones), considero que los resultados son bastante aceptables.
+
+En cuanto a catalogar algunos resultados como "buenos" o "malos", he de decir que dicha consideración ha de tener en cuenta la naturaleza del propio dataset: qué tipo de datos son y para qué serán utilizados. Por ejemplo, para los datasets centrados en el mundo de la medicina, es común fijarse en los valores obtenidos en specificity y sensitivity. Para la comunidad de data scientists, por ejemplo, en la Precisión y el Recall.
+
+La Accuracy es una medida que puede ser bastante intuitiva en datasets balanceados. Otras como ROC y Kappa son comúnmente usadas y avaladas por parte de la comunidad. No obstante, la solución, generalmente, se encuentra en la selección de un conjunto de métricas más que en una sola en particular y el algoritmo que se utilizará.
+
+En resumen, el aprendizaje, es una ciencia de exploración que requiere de experiencia e investigación, así como de una buena dosis de creatividad. No es ciencia exacta y cada vez se asienta más como un tema indispensable en nuestra vida cotidiana.
